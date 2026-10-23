@@ -1,40 +1,63 @@
 ---
-title: "2026 Florida Republican Primary for Governor"
+title: "2026 Florida Primary Election Analysis"
 format: html
 execute:
-  echo: true
+  echo: false
   message: false
   warning: false
 ---
 
 ```{r}
+#| echo: false
 library(tidyverse)
 library(scales)
+library(sf)
+library(tigris)
+
+options(tigris_use_cache = TRUE)
 ```
 
-We read all 67 county precinct files from the official Florida Department of State zip archive, filter to the Republican primary for Governor, and sum the votes for each candidate.
-
 ```{r}
+#| echo: false
 # Extract the tab-separated county files into a temporary directory
 files <- unzip("2026-pri-outputofficial.zip", exdir = tempdir())
 
-# Read all county files; X12 is office, X15 is candidate, X16 is party, X19 is votes
-gov_rep <- read_tsv(files, col_names = FALSE, show_col_types = FALSE, quote = "") |>
-  filter(X12 == "Governor", X16 == "REP") |>
-  summarize(votes = sum(as.numeric(X19), na.rm = TRUE), .by = X15) |>
-  rename(candidate = X15)
+# Read all county files; X2 is county, X12 is office, X15 is candidate, X16 is party, X19 is votes
+raw_results <- read_tsv(files, col_names = FALSE, show_col_types = FALSE, quote = "")
 
-# Plot total votes by candidate, ordered from highest to lowest
-gov_rep |>
-  ggplot(aes(x = votes, y = fct_reorder(candidate, votes))) +
-  geom_col(fill = "firebrick") +
-  scale_x_continuous(labels = label_comma()) +
+# Calculate Angie Nixon's share of the Democratic Senate vote in each county
+sen_dem_county <- raw_results |>
+  filter(X12 == "United States Senator", X16 == "DEM") |>
+  summarize(votes = sum(as.numeric(X19), na.rm = TRUE), .by = c(X2, X15)) |>
+  mutate(county_key = str_to_lower(X2)) |>
+   summarize(
+    nixon_share = sum(votes[X15 == "Angie Nixon"]) / sum(votes),
+    .by = county_key
+  )
+
+# Load Florida county shapes and join by lowercase county name (fixes "Desoto" vs "DeSoto")
+fl_counties <- counties("FL", cb = TRUE, progress_bar = FALSE) |>
+  mutate(county_key = str_to_lower(NAME)) |>
+  left_join(sen_dem_county, by = "county_key")
+
+# Map county-level vote share with a diverging scale centered at 50%
+fl_counties |>
+  ggplot(aes(fill = nixon_share)) +
+  geom_sf(color = "white", linewidth = 0.2) +
+  scale_fill_gradient2(
+    low = "#d95f02",
+    mid = "#f7f7f7",
+    high = "#1b9e77",
+    midpoint = 0.5,
+    labels = label_percent(),
+    name = "Angie Nixon\nVote Share"
+  ) +
   labs(
-    title = "2026 Florida Republican Primary for Governor",
-    subtitle = "Official precinct-level vote totals across all 67 counties",
-    x = "Total Votes",
-    y = NULL,
+    title = "2026 Florida Democratic Primary for U.S. Senate",
+    subtitle = "County vote share: Angie Nixon (green) vs. Alex Vindman (orange)",
     caption = "Source: Florida Department of State"
   ) +
-  theme_minimal()
+  theme_void()
 ```
+
+
